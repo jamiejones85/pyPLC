@@ -16,6 +16,10 @@ if (getConfigValue("digital_output_device")=="beaglebone"):
     # In case we run on beaglebone, we want to use GPIO ports.
     import Adafruit_BBIO.GPIO as GPIO
 
+if (getConfigValue("digital_output_device")=="raspberrypi"):
+    # In case we run on beaglebone, we want to use GPIO ports.
+    import RPi.GPIO as GPIO 
+
 class hardwareInterface():
     def needsSerial(self):
         # Find out, whether we need a serial port. This depends on several configuration items.
@@ -84,6 +88,8 @@ class hardwareInterface():
             GPIO.output("P8_18", GPIO.LOW)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("cp=0\n", "utf-8"))
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            GPIO.output(18, False) 
         self.outvalue &= ~1
         
     def setStateC(self):
@@ -92,6 +98,8 @@ class hardwareInterface():
             GPIO.output("P8_18", GPIO.HIGH)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("cp=1\n", "utf-8"))
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            GPIO.output(18, True) 
         self.outvalue |= 1
         
     def setPowerRelayOn(self):
@@ -100,6 +108,8 @@ class hardwareInterface():
             GPIO.output("P8_16", GPIO.HIGH)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("contactor=1\n", "utf-8"))
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            GPIO.output(14, True) 
         self.outvalue |= 2
 
     def setPowerRelayOff(self):
@@ -108,6 +118,8 @@ class hardwareInterface():
             GPIO.output("P8_16", GPIO.LOW)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("contactor=0\n", "utf-8"))
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            GPIO.output(14, False) 
         self.outvalue &= ~2
 
     def setRelay2On(self):
@@ -195,6 +207,13 @@ class hardwareInterface():
             # Port configuration according to https://github.com/jsphuebner/pyPLC/commit/475f7fe9f3a67da3d4bd9e6e16dfb668d0ddb1d6
             GPIO.setup("P8_16", GPIO.OUT) #output for port relays
             GPIO.setup("P8_18", GPIO.OUT) #output for CP
+
+        if (getConfigValue("digital_output_device") == "raspberrypi"):
+            GPIO.setmode(GPIO.BCM) 
+            GPIO.setup(18, GPIO.OUT) 
+            GPIO.setup(14, GPIO.OUT) 
+            GPIO.setup(15, GPIO.OUT) 
+
         
     def __init__(self, callbackAddToTrace=None, callbackShowStatus=None):
         self.callbackAddToTrace = callbackAddToTrace
