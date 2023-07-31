@@ -89,7 +89,7 @@ class hardwareInterface():
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("cp=0\n", "utf-8"))
         if (getConfigValue("digital_output_device")=="raspberrypi"):
-            GPIO.output(18, False) 
+            GPIO.output(23, False) 
         self.outvalue &= ~1
         
     def setStateC(self):
@@ -99,7 +99,7 @@ class hardwareInterface():
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("cp=1\n", "utf-8"))
         if (getConfigValue("digital_output_device")=="raspberrypi"):
-            GPIO.output(18, True) 
+            GPIO.output(23, True) 
         self.outvalue |= 1
         
     def setPowerRelayOn(self):
@@ -109,7 +109,7 @@ class hardwareInterface():
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("contactor=1\n", "utf-8"))
         if (getConfigValue("digital_output_device")=="raspberrypi"):
-            GPIO.output(14, True) 
+            GPIO.output(24, True) 
         self.outvalue |= 2
 
     def setPowerRelayOff(self):
@@ -119,7 +119,7 @@ class hardwareInterface():
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("contactor=0\n", "utf-8"))
         if (getConfigValue("digital_output_device")=="raspberrypi"):
-            GPIO.output(14, False) 
+            GPIO.output(24, False) 
         self.outvalue &= ~2
 
     def setRelay2On(self):
@@ -209,6 +209,7 @@ class hardwareInterface():
             GPIO.setup("P8_18", GPIO.OUT) #output for CP
 
         if (getConfigValue("digital_output_device") == "raspberrypi"):
+            GPIO.setwarnings(False)
             GPIO.setmode(GPIO.BCM) 
             GPIO.setup(18, GPIO.OUT) 
             GPIO.setup(14, GPIO.OUT) 
@@ -361,6 +362,9 @@ class hardwareInterface():
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.mainfunction_celeron55device()
 
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            self.mainfunction_raspberrypi()
+
         if getConfigValueBool("exit_on_session_end"):
             # TODO: This is a hack. Do this in fsmPev instead and publish some
             # of these values into there if needed.
@@ -395,7 +399,13 @@ class hardwareInterface():
                     s = "" # for the case we received corrupted data (not convertable as utf-8)
                 #self.addToTrace(str(len(s)) + " bytes received: " + s)
                 self.evaluateReceivedData_celeron55device(s)
-        
+
+    def mainfunction_raspberrypi(self):
+        #read from SPI for inlet voltage
+
+        #read from can bus for bus voltage
+        self.loopcounter+=1
+
 def myPrintfunction(s):
     print("myprint " + s)
 
