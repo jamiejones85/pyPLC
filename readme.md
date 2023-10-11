@@ -11,6 +11,20 @@ In this project, we call this mode *ListenMode*.
 
 ## News / Change History / Functional Status
 
+### 2023-06-29 v0.9 Released
+
+Highlights:
+- pyPLC in EvseMode runs together with the SmartEvse and fetches the SOC from the car before AC charging: https://github.com/SmartEVSE/SmartEVSE-3/issues/25. Thanks to arpiecodes, ArendJanKramer, fluppie and co for the contributions.
+- pyPLC works as CCS-to-CHAdeMO bridge on johu's Touran: https://openinverter.org/forum/viewtopic.php?p=57908#p57908, https://www.youtube.com/watch?v=tfCaqdUFx3Q Congratulations and thanks for the excellent collaboration.
+- celeron55 is on a 5000km road trip with the EVPrevia through Europe and uses pyPLC as the main charging solution. https://openinverter.org/forum/viewtopic.php?p=57940#p57940 and https://www.youtube.com/watch?v=bcMmEXSlFD8 Congratulations and enjoy the trip.
+
+Main improvements between v0.8 and v0.9:
+- Improved configuration file incl documentation
+- EvseMode: Fix for using the correct SchemaID and checking for DIN protocol in the ProtocolHandshake
+- PevMode: CHAdeMO integrated
+- EvseMode: Sending SOC etc to the SmartEVSE via http
+- Slac: Fix of the RunID
+
 ### 2023-05-22 v0.8 Released
 
 Main improvements between v0.7 and v0.8:
@@ -406,11 +420,25 @@ That's is definitely a goal, and it was reached in the meanwhile. Of course, two
 For testing the communication at home, the pyPlc supports both sides of the CCS, the car and the charger. Have a
 look to [testing_and_simulation.md](doc/testing_and_simulation.md)
 
+### Q5: What can be the reason, that the charger reports a failed cable check?
+In the cable check phase, the charger checks the following things:
+1. CP/PE lines. The charger expects "State C", this means, the car must connect a diode and two resistors between the CP and the PE. This shall result in PWM levels of -12V and +6V. The charger measures these level, and will complain with CableCheck=Failed if it detects a mismatch. Some potential root causes for failed checks are:
+- CP is not connected at all.
+- Diode is missing or has wrong polarity.
+- Diode is too slow to handle the 1kHz/5%PWM.
+- Wrong resistor values chosen or too high tolerance of the resistors
+- Connection between circuit ground and PE missing
+- too high saturation voltage of the switch transistor
+- wrong coupling network between the CP/PE and the PLC modem transformator. This may disturb the PWM levels, due to low-pass-filtering or it may inject too much power from the PLC modem.
+- Software not configured to use the correct output path for the StateC switching
+2. Isolation of the DC path. It is recommended to use two contactors, one for each DC lines, to avoid asymmetrical results in the isolation measurements.
+
 ## Credits
 Thanks to catphish to start the investigations regarding the homeplug modems and publishing them on OpenInverter forum.
-Thanks to johu for the OpenInverter forum, and for the first video of the early experiments, and the beaglebone integration.
+Thanks to johu for the OpenInverter forum, and for the first video of the early experiments, the beaglebone integration and CHAdeMO integration.
 Thanks to CCSknowitall for clarifying tricky details.
 Thanks to celeron55 for the large number of test drives to various public chargers, and for improving the software. Thanks for helpful discussions to Pete9008, peternooy, tom91, asavage and all which I forgot to mention.
+Thanks to arpiecodes, ArendJanKramer, fluppie and co from the SmartEvse project for the contributions.
 Thanks to all patreons.
 
 ## Alternatives / Other projects

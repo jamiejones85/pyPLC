@@ -8,9 +8,12 @@
 
 import serial # the pyserial
 from serial.tools.list_ports import comports
-from time import sleep
+from time import sleep, time
 from configmodule import getConfigValue, getConfigValueBool
 import sys # For exit_on_session_end hack
+
+PinCp = "P8_18"
+PinPowerRelay = "P8_16"
 
 if (getConfigValue("digital_output_device")=="beaglebone"):
     # In case we run on beaglebone, we want to use GPIO ports.
@@ -18,7 +21,12 @@ if (getConfigValue("digital_output_device")=="beaglebone"):
 
 if (getConfigValue("digital_output_device")=="raspberrypi"):
     # In case we run on beaglebone, we want to use GPIO ports.
-    import RPi.GPIO as GPIO 
+    import RPi.GPIO as GPIO
+    import can
+
+if (getConfigValue("charge_parameter_backend")=="chademo"):
+    # In case we use the CHAdeMO backend, we want to use CAN
+    import can
 
 class hardwareInterface():
     def needsSerial(self):
@@ -34,7 +42,7 @@ class hardwareInterface():
         if (getConfigValue("analog_input_device")=="celeron55device"):
             return True
         return False # non of the functionalities need a serial port.
-        
+
     def findSerialPort(self):
         baud = int(getConfigValue("serial_baud"))
         if (getConfigValue("serial_port")!="auto"):
@@ -80,46 +88,46 @@ class hardwareInterface():
                 self.isSerialInterfaceOk = False
 
     def addToTrace(self, s):
-        self.callbackAddToTrace("[HARDWAREINTERFACE] " + s)            
+        self.callbackAddToTrace("[HARDWAREINTERFACE] " + s)
 
     def setStateB(self):
         self.addToTrace("Setting CP line into state B.")
         if (getConfigValue("digital_output_device")=="beaglebone"):
-            GPIO.output("P8_18", GPIO.LOW)
+            GPIO.output(PinCp, GPIO.LOW)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("cp=0\n", "utf-8"))
         if (getConfigValue("digital_output_device")=="raspberrypi"):
-            GPIO.output(23, False) 
+            GPIO.output(23, False)
         self.outvalue &= ~1
-        
+
     def setStateC(self):
         self.addToTrace("Setting CP line into state C.")
         if (getConfigValue("digital_output_device")=="beaglebone"):
-            GPIO.output("P8_18", GPIO.HIGH)
+            GPIO.output(PinCp, GPIO.HIGH)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("cp=1\n", "utf-8"))
         if (getConfigValue("digital_output_device")=="raspberrypi"):
-            GPIO.output(23, True) 
+            GPIO.output(23, True)
         self.outvalue |= 1
-        
+
     def setPowerRelayOn(self):
         self.addToTrace("Switching PowerRelay ON.")
         if (getConfigValue("digital_output_device")=="beaglebone"):
-            GPIO.output("P8_16", GPIO.HIGH)
+            GPIO.output(PinPowerRelay, GPIO.HIGH)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("contactor=1\n", "utf-8"))
         if (getConfigValue("digital_output_device")=="raspberrypi"):
-            GPIO.output(24, True) 
+            GPIO.output(24, True)
         self.outvalue |= 2
 
     def setPowerRelayOff(self):
         self.addToTrace("Switching PowerRelay OFF.")
         if (getConfigValue("digital_output_device")=="beaglebone"):
-            GPIO.output("P8_16", GPIO.LOW)
+            GPIO.output(PinPowerRelay, GPIO.LOW)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("contactor=0\n", "utf-8"))
         if (getConfigValue("digital_output_device")=="raspberrypi"):
-            GPIO.output(24, False) 
+            GPIO.output(24, False)
         self.outvalue &= ~2
 
     def setRelay2On(self):
@@ -129,12 +137,12 @@ class hardwareInterface():
     def setRelay2Off(self):
         self.addToTrace("Switching Relay2 OFF.")
         self.outvalue &= ~4
-        
+
     def getPowerRelayConfirmation(self):
         if (getConfigValue("digital_output_device")=="celeron55device"):
             return self.contactor_confirmed
         return 1 # todo: self.contactor_confirmed
-        
+
     def triggerConnectorLocking(self):
         self.addToTrace("Locking the connector")
         if (getConfigValue("digital_output_device")=="celeron55device"):
@@ -153,14 +161,24 @@ class hardwareInterface():
         #    return self.lock_confirmed
         return 1 # todo: use the real connector lock feedback
 
+    def setChargerParameters(self, maxVoltage, maxCurrent):
+        self.maxChargerVoltage = int(maxVoltage)
+        self.maxChargerCurrent = int(maxCurrent)
+
+    def setChargerVoltageAndCurrent(self, voltageNow, currentNow):
+        self.chargerVoltage = int(voltageNow)
+        self.chargerCurrent = int(currentNow)
+
     def getInletVoltage(self):
         # uncomment this line, to take the simulated inlet voltage instead of the really measured
         # self.inletVoltage = self.simulatedInletVoltage
         return self.inletVoltage
-        
+
     def getAccuVoltage(self):
         if (getConfigValue("digital_output_device")=="celeron55device"):
             return self.accuVoltage
+        elif getConfigValue("charge_parameter_backend")=="chademo":
+           return self.accuVoltage
         #todo: get real measured voltage from the accu
         self.accuVoltage = 230
         return self.accuVoltage
@@ -173,12 +191,16 @@ class hardwareInterface():
             if self.accuMaxCurrent >= EVMaximumCurrentLimit:
                 return EVMaximumCurrentLimit
             return self.accuMaxCurrent
+        elif getConfigValue("charge_parameter_backend")=="chademo":
+            return self.accuMaxCurrent #set by CAN
         #todo: get max charging current from the BMS
         self.accuMaxCurrent = 10
         return self.accuMaxCurrent
 
     def getAccuMaxVoltage(self):
-        if getConfigValue("charge_target_voltage"):
+        if getConfigValue("charge_parameter_backend")=="chademo":
+            return self.accuMaxVoltage #set by CAN
+        elif getConfigValue("charge_target_voltage"):
             self.accuMaxVoltage = getConfigValue("charge_target_voltage")
         else:
             #todo: get max charging voltage from the BMS
@@ -203,19 +225,31 @@ class hardwareInterface():
         return self.simulatedSoc
 
     def initPorts(self):
+        if (getConfigValue("charge_parameter_backend") == "chademo"):
+            filters = [
+               {"can_id": 0x100, "can_mask": 0x7FF, "extended": False},
+               {"can_id": 0x101, "can_mask": 0x7FF, "extended": False},
+               {"can_id": 0x102, "can_mask": 0x7FF, "extended": False}]
+            self.canbus = can.interface.Bus(bustype='socketcan', channel="can0", can_filters = filters)
+
         if (getConfigValue("digital_output_device") == "beaglebone"):
             # Port configuration according to https://github.com/jsphuebner/pyPLC/commit/475f7fe9f3a67da3d4bd9e6e16dfb668d0ddb1d6
-            GPIO.setup("P8_16", GPIO.OUT) #output for port relays
-            GPIO.setup("P8_18", GPIO.OUT) #output for CP
+            GPIO.setup(PinPowerRelay, GPIO.OUT) #output for port relays
+            GPIO.setup(PinCp, GPIO.OUT) #output for CP
+
 
         if (getConfigValue("digital_output_device") == "raspberrypi"):
             GPIO.setwarnings(False)
-            GPIO.setmode(GPIO.BCM) 
-            GPIO.setup(18, GPIO.OUT) 
-            GPIO.setup(14, GPIO.OUT) 
-            GPIO.setup(15, GPIO.OUT) 
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(23, GPIO.OUT)
+            GPIO.setup(24, GPIO.OUT)
+            #simpbms filters
+            filters = [
+               {"can_id": 0x355, "can_mask": 0x7FF, "extended": False},
+               {"can_id": 0x356, "can_mask": 0x7FF, "extended": False}]
+            self.canbus = can.interface.Bus(bustype='socketcan', channel="can0", can_filters = filters)
 
-        
+
     def __init__(self, callbackAddToTrace=None, callbackShowStatus=None):
         self.callbackAddToTrace = callbackAddToTrace
         self.callbackShowStatus = callbackShowStatus
@@ -229,9 +263,17 @@ class hardwareInterface():
         self.lock_confirmed = False  # Confirmation from hardware
         self.cp_pwm = 0.0
         self.soc_percent = 0.0
+        self.capacity = 0.0
+        self.accuMaxVoltage = 0.0
         self.accuMaxCurrent = 0.0
         self.contactor_confirmed = False  # Confirmation from hardware
         self.plugged_in = None  # None means "not known yet"
+        self.lastReceptionTime = 0
+
+        self.maxChargerVoltage = 0
+        self.maxChargerCurrent = 10
+        self.chargerVoltage = 0
+        self.chargerCurrent = 0
 
         self.logged_inlet_voltage = None
         self.logged_dc_link_voltage = None
@@ -245,17 +287,17 @@ class hardwareInterface():
 
         self.findSerialPort()
         self.initPorts()
-        
+
     def resetSimulation(self):
         self.simulatedInletVoltage = 0.0 # volts
         self.simulatedSoc = 20.0 # percent
-        
+
     def simulatePreCharge(self):
         if (self.simulatedInletVoltage<230):
             self.simulatedInletVoltage = self.simulatedInletVoltage + 1.0 # simulate increasing voltage during PreCharge
 
     def close(self):
-        if (self.isSerialInterfaceOk):        
+        if (self.isSerialInterfaceOk):
             self.ser.close()
 
     def evaluateReceivedData_dieter(self, s):
@@ -344,7 +386,7 @@ class hardwareInterface():
             else:
                 s = "lc" + s1 + "\n" + "lc" + s2 + "\n" + "lc" + s3 + "\n"
                 self.ser.write(bytes(s, "utf-8"))
-        
+
     def mainfunction(self):
         if (getConfigValueBool("soc_simulation")):
             if (self.simulatedSoc<100):
@@ -355,7 +397,10 @@ class hardwareInterface():
                     #  0.01 charging needs some minutes, good for light bulb tests
                     #  0.5 charging needs ~8s, good for automatic test case runs.
                     self.simulatedSoc = self.simulatedSoc + deltaSoc
-                
+
+        if (getConfigValue("charge_parameter_backend")=="chademo"):
+           self.mainfunction_chademo()
+
         if (getConfigValue("digital_output_device")=="dieter"):
             self.mainfunction_dieter()
 
@@ -406,6 +451,51 @@ class hardwareInterface():
         #read from can bus for bus voltage
         self.loopcounter+=1
 
+
+
+    def mainfunction_chademo(self):
+       message = self.canbus.recv(0)
+
+       if message:
+          if message.arbitration_id == 0x100:
+             vtg = (message.data[1] << 8) + message.data[0]
+             if self.accuVoltage != vtg:
+                 self.addToTrace("CHAdeMO: Set battery voltage to %d V" % vtg)
+             self.accuVoltage = vtg
+             if self.capacity != message.data[6]:
+                 self.addToTrace("CHAdeMO: Set capacity to %d" % message.data[6])
+             self.capacity = message.data[6]
+
+             msg = can.Message(arbitration_id=0x108, data=[ 0, self.maxChargerVoltage & 0xFF, self.maxChargerVoltage >> 8, self.maxChargerCurrent, 0, 0, 0, 0], is_extended_id=False)
+             self.canbus.send(msg)
+             #Report unspecified version 10, this makes our custom implementation send the momentary
+             #battery voltage in 0x100 bytes 0 and 1
+             status = 4 if self.maxChargerVoltage > 0 else 0  #report connector locked
+             msg = can.Message(arbitration_id=0x109, data=[ 10, self.chargerVoltage & 0xFF, self.chargerVoltage >> 8, self.chargerCurrent, 0, status, 0, 0], is_extended_id=False)
+             self.canbus.send(msg)
+
+          if message.arbitration_id == 0x102:
+             vtg = (message.data[2] << 8) + message.data[1]
+             if self.accuMaxVoltage != vtg:
+                 self.addToTrace("CHAdeMO: Set target voltage to %d V" % vtg)
+             self.accuMaxVoltage = vtg
+
+             if self.accuMaxCurrent != message.data[3]:
+                 self.addToTrace("CHAdeMO: Set current request to %d A" % message.data[3])
+             self.accuMaxCurrent = message.data[3]
+             self.lastReceptionTime = time()
+
+             if self.capacity > 0:
+                 soc = message.data[6] / self.capacity * 100
+                 if self.simulatedSoc != soc:
+                     self.addToTrace("CHAdeMO: Set SoC to %d %%" % soc)
+                 self.simulatedSoc = soc
+       #if nothing was received for over a second, time out
+       if self.lastReceptionTime < (time() - 1):
+           if self.accuMaxCurrent != 0:
+              self.addToTrace("CHAdeMO: No current limit update for over 1s, setting current to 0")
+           self.accuMaxCurrent = 0
+
 def myPrintfunction(s):
     print("myprint " + s)
 
@@ -434,5 +524,5 @@ if __name__ == "__main__":
         if (i==320):
             hw.showOnDisplay("This", "...is...", "DONE :-)")
         sleep(0.03)
-    hw.close()    
+    hw.close()
     print("finished.")
