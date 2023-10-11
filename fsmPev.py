@@ -232,6 +232,9 @@ class fsmPev():
         # We just use the initial request message from the Ioniq. It contains one entry: DIN.
         self.addToTrace("Checkpoint400: Sending the initial SupportedApplicationProtocolReq")
         self.Tcp.transmit(addV2GTPHeader(exiHexToByteArray(exiHexDemoSupportedApplicationProtocolRequestIoniq)))
+        # For testing purposes, we can also use the requests from other cars:
+        #self.Tcp.transmit(addV2GTPHeader(exiHexToByteArray(exiHexDemoSupportedApplicationProtocolRequestTesla)))
+        #self.Tcp.transmit(addV2GTPHeader(exiHexToByteArray(exiHexDemoSupportedApplicationProtocolRequestBMWiX3)))
         self.hardwareInterface.resetSimulation()
         self.enterState(stateWaitForSupportedApplicationProtocolResponse)
         
@@ -275,15 +278,18 @@ class fsmPev():
                 # todo: check the request content, and fill response parameters
                 strResponseCode = "na"
                 try:
-                    y = json.loads(strConverterResult)
-                    strSessionId = y["header.SessionID"]
-                    strResponseCode = y["ResponseCode"]
+                    jsondict = json.loads(strConverterResult)
+                    strSessionId = jsondict["header.SessionID"]
+                    strResponseCode = jsondict["ResponseCode"]
                     self.addToTrace("Checkpoint506: The Evse decided for SessionId " + strSessionId)
                     self.publishStatus("Session established")
                     self.sessionId = strSessionId
                 except:
                     self.addToTrace("ERROR: Could not decode the sessionID")
-                if (strResponseCode!="OK_NewSessionEstablished"):
+                if ((strResponseCode!="OK_NewSessionEstablished") and (strResponseCode!="OK")):
+                    # According to the standard, the only valid response code is OK_NewSessionEstablished.
+                    # But the ABB chargers use "OK", so we need to accept this, too. Discussed
+                    # here: https://openinverter.org/forum/viewtopic.php?p=58399#p58399
                     self.addToTrace("Wrong response code. Aborting.")
                     self.enterState(stateUnrecoverableError)
                     return
@@ -305,8 +311,8 @@ class fsmPev():
             if (strConverterResult.find("ServiceDiscoveryRes")>0):
                 strResponseCode = "na"
                 try:
-                    y = json.loads(strConverterResult)
-                    strResponseCode = y["ResponseCode"]
+                    jsondict = json.loads(strConverterResult)
+                    strResponseCode = jsondict["ResponseCode"]
                 except:
                     self.addToTrace("ERROR: Could not decode the ServiceDiscoveryResponse")
                 if (strResponseCode!="OK"):
@@ -333,8 +339,8 @@ class fsmPev():
                 # todo: check the request content, and fill response parameters
                 strResponseCode = "na"
                 try:
-                    y = json.loads(strConverterResult)
-                    strResponseCode = y["ResponseCode"]
+                    jsondict = json.loads(strConverterResult)
+                    strResponseCode = jsondict["ResponseCode"]
                 except:
                     self.addToTrace("ERROR: Could not decode the ServicePaymentSelectionResponse")
                 if (strResponseCode!="OK"):
@@ -366,8 +372,8 @@ class fsmPev():
                 # Or, the authorization is finished. This is shown by EVSEProcessing=Finished.
                 strResponseCode = "na"
                 try:
-                    y = json.loads(strConverterResult)
-                    strResponseCode = y["ResponseCode"]
+                    jsondict = json.loads(strConverterResult)
+                    strResponseCode = jsondict["ResponseCode"]
                 except:
                     self.addToTrace("ERROR: Could not decode the ContractAuthenticationResponse")
                 if (strResponseCode!="OK"):
@@ -410,28 +416,41 @@ class fsmPev():
             self.addToTrace(strConverterResult)
             if (strConverterResult.find("ChargeParameterDiscoveryRes")>0):
                 strResponseCode = "na"
+                strEVSEProcessing = "na"
+                strEVSEStatusCode_text = "na"
                 try:
-                    y = json.loads(strConverterResult)
-                    strResponseCode = y["ResponseCode"]
+                    jsondict = json.loads(strConverterResult)
+                    strResponseCode = jsondict["ResponseCode"]
+                    strEVSEProcessing =  jsondict["EVSEProcessing"]
+                    strEVSEStatusCode_text = jsondict["EVSEStatusCode_text"]
                 except:
                     self.addToTrace("ERROR: Could not decode the ChargeParameterDiscoveryResponse")
                 if (strResponseCode!="OK"):
                     self.addToTrace("Wrong response code. Aborting.")
                     self.enterState(stateUnrecoverableError)
                     return
-                # We can have two cases here:
-                # (A) The charger needs more time to show the charge parameters.
-                # (B) The charger finished to tell the charge parameters.
-                if (strConverterResult.find('"EVSEProcessing": "Finished"')>0):
+                # We can have three cases here:
+                # (A) The charger needs more time to show the charge parameters. It does not say "EVSEProcessing": "Finished".
+                # (B) The charger finished to tell the charge parameters, but still needs more time for internal purposes.
+                #     It says "EVSEProcessing": "Finished", but also "EVSEStatusCode_text": "EVSE_NotReady". Observed and discussed
+                #     here: https://openinverter.org/forum/viewtopic.php?p=58239#p58239.
+                #     Update: This seems to be a normal case for Compleo, and NO reason to wait. So we go to the next step (cable check).
+                # (C) The charger is really finished and able to continue with the next step (cable check).
+                if ((strEVSEProcessing == "Finished")) :
+                    # Case B and C
                     self.publishStatus("ChargeParams discovered")
                     self.addToTrace("Checkpoint550: ChargeParams are discovered. Will change to state C.")
+                    #Report charger paramters
+                    maxI = combineValueAndMultiplier(jsondict["EVSEMaximumCurrentLimit.Value"], jsondict["EVSEMaximumCurrentLimit.Multiplier"])
+                    maxV = combineValueAndMultiplier(jsondict["EVSEMaximumVoltageLimit.Value"], jsondict["EVSEMaximumVoltageLimit.Multiplier"])
+                    self.hardwareInterface.setChargerParameters(maxV, maxI)
                     # pull the CP line to state C here:
                     self.hardwareInterface.setStateC()
                     self.addToTrace("Checkpoint555: Locking the connector.")
                     self.hardwareInterface.triggerConnectorLocking()
                     self.enterState(stateWaitForConnectorLock)
                 else:
-                    # Not (yet) finished.
+                    # Not (yet) finished. Cases A and B.
                     if (self.numberOfChargeParameterDiscoveryReq>=60): # approx 60 seconds, should be sufficient for the charger to find its parameters... The ISO allows up to 55s reaction time and 60s timeout for "ongoing".
                         self.addToTrace("ChargeParameterDiscovery lasted too long. " + str(self.numberOfChargeParameterDiscoveryReq) + " Giving up.")
                         self.enterState(stateSequenceTimeout)
@@ -467,9 +486,9 @@ class fsmPev():
             if (strConverterResult.find("CableCheckRes")>0):
                 strResponseCode = "na"
                 try:
-                    y = json.loads(strConverterResult)
-                    strResponseCode = y["ResponseCode"]
-                    strEVSEProcessing = y["EVSEProcessing"]
+                    jsondict = json.loads(strConverterResult)
+                    strResponseCode = jsondict["ResponseCode"]
+                    strEVSEProcessing = jsondict["EVSEProcessing"]
                     self.addToTrace("The CableCheck result is " + strResponseCode + " " + strEVSEProcessing)
                 except:
                     self.addToTrace("ERROR: Could not decode the CableCheckRes")
@@ -523,13 +542,13 @@ class fsmPev():
                 strResponseCode = "na"
                 strEVSEStatusCode = "0" # default in case the decoding does not work
                 try:
-                    y = json.loads(strConverterResult)
-                    strResponseCode = y["ResponseCode"]
-                    strEVSEPresentVoltageValue = y["EVSEPresentVoltage.Value"]
-                    strEVSEPresentVoltageMultiplier = y["EVSEPresentVoltage.Multiplier"]
+                    jsondict = json.loads(strConverterResult)
+                    strResponseCode = jsondict["ResponseCode"]
+                    strEVSEPresentVoltageValue = jsondict["EVSEPresentVoltage.Value"]
+                    strEVSEPresentVoltageMultiplier = jsondict["EVSEPresentVoltage.Multiplier"]
                     u = combineValueAndMultiplier(strEVSEPresentVoltageValue, strEVSEPresentVoltageMultiplier)
                     self.callbackShowStatus(format(u,".1f"), "EVSEPresentVoltage")
-                    strEVSEStatusCode = y["DC_EVSEStatus.EVSEStatusCode"]
+                    strEVSEStatusCode = jsondict["DC_EVSEStatus.EVSEStatusCode"]
                 except:
                     self.addToTrace("ERROR: Could not decode the PreChargeResponse")
                 self.addToTrace("PreChargeResponse received.")
@@ -605,8 +624,8 @@ class fsmPev():
             if (strConverterResult.find("PowerDeliveryRes")>0):
                 strResponseCode = "na"
                 try:
-                    y = json.loads(strConverterResult)
-                    strResponseCode = y["ResponseCode"]
+                    jsondict = json.loads(strConverterResult)
+                    strResponseCode = jsondict["ResponseCode"]
                 except:
                     self.addToTrace("ERROR: Could not decode the PowerDeliveryResponse")
                 if (strResponseCode!="OK"):
@@ -646,13 +665,17 @@ class fsmPev():
                 u = 0 # a default voltage of 0V in case we cannot convert the actual value
                 strEVSEStatusCode = "0" # default in case the decoding does not work
                 try:
-                    y = json.loads(strConverterResult)
-                    strResponseCode = y["ResponseCode"]
-                    strEVSEPresentVoltageValue = y["EVSEPresentVoltage.Value"]
-                    strEVSEPresentVoltageMultiplier = y["EVSEPresentVoltage.Multiplier"]
+                    jsondict = json.loads(strConverterResult)
+                    strResponseCode = jsondict["ResponseCode"]
+                    strEVSEPresentVoltageValue = jsondict["EVSEPresentVoltage.Value"]
+                    strEVSEPresentVoltageMultiplier = jsondict["EVSEPresentVoltage.Multiplier"]
+                    strEVSEPresentCurrentValue = jsondict["EVSEPresentCurrent.Value"]
+                    strEVSEPresentCurrentMultiplier = jsondict["EVSEPresentCurrent.Multiplier"]
                     u = combineValueAndMultiplier(strEVSEPresentVoltageValue, strEVSEPresentVoltageMultiplier)
+                    i = combineValueAndMultiplier(strEVSEPresentCurrentValue, strEVSEPresentCurrentMultiplier)
                     self.callbackShowStatus(format(u,".1f"), "EVSEPresentVoltage")
-                    strEVSEStatusCode = y["DC_EVSEStatus.EVSEStatusCode"]
+                    strEVSEStatusCode = jsondict["DC_EVSEStatus.EVSEStatusCode"]
+                    self.hardwareInterface.setChargerVoltageAndCurrent(u, i)
                 except:
                     self.addToTrace("ERROR: Could not decode the PreChargeResponse")
                 if (strResponseCode!="OK"):

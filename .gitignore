@@ -3,8 +3,11 @@
 /doc/*.jar
 *.bat
 PevExiLog*.txt
+DemoExiLog.txt.decoded.txt
 testresults.txt
 *.ini
 /log
 /local
 *.bak
+*.pyc
+

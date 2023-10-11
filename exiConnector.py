@@ -55,6 +55,10 @@ exiHexDemoSupportedApplicationProtocolRequestIoniq="8000dbab9371d3234b71d1b98189
 #    Command line:
 #    ./OpenV2G.exe DH8000dbab9371d3234b71d1b981899189d191818991d26b9b3a232b30020000040040
 
+#    (1b) From the tesla. Source https://github.com/SmartEVSE/SmartEVSE-3/issues/25#issuecomment-1606259381)
+exiHexDemoSupportedApplicationProtocolRequestTesla="8000DBAB9371D3234B71D1B981899189D191818991D26B9B3A232B30020000040401B75726E3A7465736C613A64696E3A323031383A4D736744656600001C0100080"
+# The BMW iX3 handshake request (one schema, schemaID 0, from https://github.com/SmartEVSE/SmartEVSE-3/issues/25#issuecomment-1606271999)
+exiHexDemoSupportedApplicationProtocolRequestBMWiX3="8000DBAB9371D3234B71D1B981899189D191818991D26B9B3A232B30020000000040"
 
 #   (2) From OpenV2G main_example.appHandshake()
 #   8000ebab9371d34b9b79d189a98989c1d191d191818981d26b9b3a232b30010000040001b75726e3a64696e3a37303132313a323031323a4d73674465660020000100880
@@ -101,6 +105,7 @@ exiHexDemoSupportedApplicationProtocolRequest2="8000ebab9371d34b9b79d189a98989c1
 # 809a0125e6cecc50e0004080000082867dc8081818000000040a1b64802030882702038486580800 CurrentDemandRes
 # 809a0125e6cecc50e0804080000082867dc8081818000000040a1b64802030882702038486580800 CurrentDemandRes with "FAILED"
 
+# Further examples are collected in the DemoExiLog.txt.
 
 # Configuration of the exi converter tool
 if os.name == "nt":
@@ -213,9 +218,9 @@ def exiEncode(strMessageName):
         # "result": "8004440400"
         # }
         try:
-            y = json.loads(result.stdout)
-            strConverterResult = y["result"]
-            strConverterError = y["error"]
+            jsondict = json.loads(result.stdout)
+            strConverterResult = jsondict["result"]
+            strConverterError = jsondict["error"]
             if (len(strConverterError)>0):
                 print("[EXICONNECTOR] exiEncode error " + strConverterError)
             #print("strConverterResult is " + str(strConverterResult))
@@ -261,31 +266,51 @@ def testReadExiFromSnifferFile():
             #print(s)
             testDecoder(s, "DD", "")
 
-def testReadExiFromExiLogFile():
-    file1 = open('PevExiLog.txt', 'r')
-    fileOut = open('PevExiLog.decoded.txt', 'w')
-    # example: "ED 809a02004080c1014181c210b8"
-    # example with timestamp: "2022-12-20T08:17:15.055755=ED 809a02004080c1014181c21198"
-    Lines = file1.readlines()
-    for myLine in Lines:
-        posOfEqual=myLine.find("=")
-        if (posOfEqual>0):
-            # we have an equal-sign. Take the string behind it.
-            strToDecode=myLine[posOfEqual+1:]
-        else:
-            # no equal-sign. Take the complete line.
-            strToDecode=myLine
-        if (strToDecode[1:3]=="D "): # it is DIN
-            posOfSpace=2
-            s = strToDecode[posOfSpace+1:] # The part after the " " contains the EXI hex data.
-            s = s.replace(" ", "") # Remove blanks
-            s = s.replace("\n", "") # Remove line feeds
-            #print(s)
-            decoded=exiDecode(s, "DD")
-            print(decoded)
-            print(myLine.replace("\n", "") + " means:", file=fileOut)            
-            print(decoded, file=fileOut)            
-    fileOut.close()
+def testReadExiFromExiLogFile(strLogFileName):
+    print("Trying to read from ExiLogFile " + strLogFileName)
+    try:
+        file1 = open(strLogFileName, 'r')
+        isFileOk = True
+    except:
+        print("Could not open " + strLogFileName)
+        isFileOk = False
+        if (strLogFileName == "PevExiLog.txt"):
+            print("This is no problem. The PevExiLog.txt will be created when the pyPLC runs in PevMode, and can be decoded afterwards.")
+    if (isFileOk):
+        fileOut = open(strLogFileName + '.decoded.txt', 'w')
+        # example: "ED 809a02004080c1014181c210b8"
+        # example with timestamp: "2022-12-20T08:17:15.055755=ED 809a02004080c1014181c21198"
+        Lines = file1.readlines()
+        for myLine in Lines:
+            posOfEqual=myLine.find("=")
+            if (posOfEqual>0):
+                # we have an equal-sign. Take the string behind it.
+                strToDecode=myLine[posOfEqual+1:]
+            else:
+                # no equal-sign. Take the complete line.
+                strToDecode=myLine
+            if (myLine[0]=="#"):
+                # take-over comment lines into the output
+                print(myLine.replace("\n", ""))
+                print(myLine.replace("\n", ""), file=fileOut)
+            strDecoderSelection = "" # default: unknown line
+            if (strToDecode[1:3]=="D "):
+                strDecoderSelection = "D" # it is a DIN message
+            if (strToDecode[1:3]=="H ") or (strToDecode[1:3]=="h "):
+                strDecoderSelection = "H" # it is a ProtocolHandshake message
+                
+            if (len(strDecoderSelection)>0): # if we have selected a valid decoder
+                posOfSpace=2
+                s = strToDecode[posOfSpace+1:] # The part after the " " contains the EXI hex data.
+                s = s.replace(" ", "") # Remove blanks
+                s = s.replace("\n", "") # Remove line feeds
+                #print(s)
+                decoded=exiDecode(s, "D"+strDecoderSelection)
+                print(myLine.replace("\n", "") + " means:")
+                print(decoded)
+                print(myLine.replace("\n", "") + " means:", file=fileOut)            
+                print(decoded, file=fileOut)            
+        fileOut.close()
 
 def testTimeConsumption():
     strHex = "809a001150400000c80006400000"
@@ -314,7 +339,8 @@ if __name__ == "__main__":
         testTimeConsumption()
         exit()
     if (True):        
-        testReadExiFromExiLogFile()
+        testReadExiFromExiLogFile('DemoExiLog.txt')
+        testReadExiFromExiLogFile('PevExiLog.txt')
         exit()
     
     if (False):

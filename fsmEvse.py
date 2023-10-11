@@ -28,9 +28,9 @@ class fsmEvse():
     def publishStatus(self, s):
         self.callbackShowStatus(s, "evseState")
 
-    def publishSoCs(self, remaining_soc: int, full_soc: int = -1, bulk_soc: int = -1, origin: str = ""):
+    def publishSoCs(self, current_soc: int, full_soc: int = -1, energy_capacity: int = -1, energy_request: int = -1, evccid: str = "", origin: str = ""):
         if self.callbackSoCStatus is not None:
-            self.callbackSoCStatus(remaining_soc, full_soc, bulk_soc, origin)
+            self.callbackSoCStatus(current_soc, full_soc, energy_capacity, energy_request, self.evccid, origin)
 
     def enterState(self, n):
         self.addToTrace("from " + str(self.state) + " entering " + str(n))
@@ -51,17 +51,32 @@ class fsmEvse():
             self.rxData = []
             strConverterResult = exiDecode(exidata, "DH") # Decode Handshake-request
             self.addToTrace(strConverterResult)
-            if (strConverterResult.find("ProtocolNamespace=urn:din")>0):
-                # todo: of course we should care for schemaID and prio also here
-                self.addToTrace("Detected DIN")
-                # TESTSUITE: When the EVSE received the Handshake, it selects a new test case.
-                testsuite_choose_testcase()
-                # Eh for encode handshake, SupportedApplicationProtocolResponse
-                msg = addV2GTPHeader(exiEncode("Eh"))
-                self.addToTrace("responding " + prettyHexMessage(msg))
-                self.Tcp.transmit(msg)
-                self.publishStatus("Schema negotiated")
-                self.enterState(stateWaitForSessionSetupRequest)
+            if (strConverterResult.find("supportedAppProtocolReq")>0):
+                nDinSchemaID = 255 # invalid default value
+                try:
+                    jsondict = json.loads(strConverterResult)
+                    nAppProtocol_ArrayLen = int(jsondict["AppProtocol_arrayLen"])
+                    self.addToTrace("The car supports " + str(nAppProtocol_ArrayLen) + " schemas.")
+                    for i in range(nAppProtocol_ArrayLen):
+                        strNameSpace = jsondict["NameSpace_"+str(i)]
+                        nSchemaId = int(jsondict["SchemaID_"+str(i)])
+                        self.addToTrace("The NameSpace " + strNameSpace + " has SchemaID " + str(nSchemaId))
+                        if (strNameSpace.find(":din:70121:")>0):
+                            nDinSchemaID = nSchemaId
+                except:
+                    self.addToTrace("ERROR: Could not decode the supportedAppProtocolReq")
+                if (nDinSchemaID<255):
+                    self.addToTrace("Detected DIN")
+                    # TESTSUITE: When the EVSE received the Handshake, it selects a new test case.
+                    testsuite_choose_testcase()
+                    # Eh for encode handshake, SupportedApplicationProtocolResponse, with SchemaID as parameter
+                    msg = addV2GTPHeader(exiEncode("Eh__"+str(nDinSchemaID)))
+                    self.addToTrace("responding " + prettyHexMessage(msg))
+                    self.Tcp.transmit(msg)
+                    self.publishStatus("Schema negotiated")
+                    self.enterState(stateWaitForSessionSetupRequest)
+                else:
+                    self.addToTrace("Error: The connected car does not support DIN. At the moment, the pyPLC only supports DIN.")
 
     def stateFunctionWaitForSessionSetupRequest(self):
         if (len(self.rxData)>0):
@@ -82,6 +97,9 @@ class fsmEvse():
                 self.Tcp.transmit(msg)
                 self.publishStatus("Session established")
                 self.enterState(stateWaitForServiceDiscoveryRequest)
+                jsondict = json.loads(strConverterResult)
+                self.evccid = jsondict.get("EVCCID", "")
+
         if (self.isTooLong()):
             self.enterState(0)
 
@@ -135,9 +153,9 @@ class fsmEvse():
             if (strConverterResult.find("PowerDeliveryReq")>0):
                 # todo: check the request content, and fill response parameters
                 self.addToTrace("Received PowerDeliveryReq. Extracting SoC parameters")
-                info = json.loads(strConverterResult)
-                remaining_soc = int(info.get("EVRESSSOC", -1))
-                self.publishSoCs(remaining_soc, origin="PowerDeliveryReq")
+                jsondict = json.loads(strConverterResult)
+                current_soc = int(jsondict.get("EVRESSSOC", -1))
+                self.publishSoCs(current_soc, origin="PowerDeliveryReq")
                 msg = addV2GTPHeader(exiEncode("EDh")) # EDh for Encode, Din, PowerDeliveryResponse
                 if (testsuite_faultinjection_is_triggered(TC_EVSE_ResponseCode_Failed_for_PowerDeliveryRes)):
                     # send a PowerDeliveryResponse with Responsecode Failed
@@ -148,11 +166,12 @@ class fsmEvse():
                 self.enterState(stateWaitForFlexibleRequest) # todo: not clear, what is specified in DIN
             if (strConverterResult.find("ChargeParameterDiscoveryReq")>0):
                 self.addToTrace("Received ChargeParameterDiscoveryReq. Extracting SoC parameters via DC")
-                info = json.loads(strConverterResult)
-                remaining_soc = int(info.get("DC_EVStatus.EVRESSSOC", -1))
-                full_soc = int(info.get("FullSOC", -1))
-                bulk_soc = int(info.get("BulkSOC", -1))
-                self.publishSoCs(remaining_soc, full_soc, bulk_soc, origin="ChargeParameterDiscoveryReq")
+                jsondict = json.loads(strConverterResult)
+                current_soc = int(jsondict.get("DC_EVStatus.EVRESSSOC", -1))
+                full_soc = int(jsondict.get("FullSOC", -1))
+                energy_capacity = int(jsondict.get("EVEnergyCapacity.Value", -1))
+                energy_request = int(jsondict.get("EVEnergyRequest.Value", -1))
+                self.publishSoCs(current_soc, full_soc, energy_capacity, energy_request, origin="ChargeParameterDiscoveryReq")
 
                 # todo: check the request content, and fill response parameters
                 msg = addV2GTPHeader(exiEncode("EDe")) # EDe for Encode, Din, ChargeParameterDiscoveryResponse
@@ -167,9 +186,9 @@ class fsmEvse():
                 # todo: check the request content, and fill response parameters
                 # todo: make a real cable check, and while it is ongoing, send "Ongoing".
                 self.addToTrace("Received CableCheckReq. Extracting SoC parameters via DC")
-                info = json.loads(strConverterResult)
-                remaining_soc = int(info.get("DC_EVStatus.EVRESSSOC", -1))
-                self.publishSoCs(remaining_soc, -1, -1, origin="CableCheckReq")
+                jsondict = json.loads(strConverterResult)
+                current_soc = int(jsondict.get("DC_EVStatus.EVRESSSOC", -1))
+                self.publishSoCs(current_soc, -1, -1, origin="CableCheckReq")
 
                 msg = addV2GTPHeader(exiEncode("EDf")) # EDf for Encode, Din, CableCheckResponse
                 if (testsuite_faultinjection_is_triggered(TC_EVSE_ResponseCode_Failed_for_CableCheckRes)):
@@ -184,9 +203,9 @@ class fsmEvse():
                 # check the request content, and fill response parameters
                 uTarget = 220 # default in case we cannot decode the requested voltage
                 try:
-                    y = json.loads(strConverterResult)
-                    strEVTargetVoltageValue = y["EVTargetVoltage.Value"]
-                    strEVTargetVoltageMultiplier = y["EVTargetVoltage.Multiplier"]
+                    jsondict = json.loads(strConverterResult)
+                    strEVTargetVoltageValue = jsondict["EVTargetVoltage.Value"]
+                    strEVTargetVoltageMultiplier = jsondict["EVTargetVoltage.Multiplier"]
                     uTarget = combineValueAndMultiplier(strEVTargetVoltageValue, strEVTargetVoltageMultiplier)
                     self.addToTrace("EV wants EVTargetVoltage " + str(uTarget))
                 except:
@@ -227,18 +246,19 @@ class fsmEvse():
                 # check the request content, and fill response parameters
                 uTarget = 220 # default in case we cannot decode the requested voltage
                 try:
-                    y = json.loads(strConverterResult)
-                    strEVTargetVoltageValue = y["EVTargetVoltage.Value"]
-                    strEVTargetVoltageMultiplier = y["EVTargetVoltage.Multiplier"]
+                    jsondict = json.loads(strConverterResult)
+                    strEVTargetVoltageValue = jsondict["EVTargetVoltage.Value"]
+                    strEVTargetVoltageMultiplier = jsondict["EVTargetVoltage.Multiplier"]
                     uTarget = combineValueAndMultiplier(strEVTargetVoltageValue, strEVTargetVoltageMultiplier)
                     self.addToTrace("EV wants EVTargetVoltage " + str(uTarget))
+                    current_soc = int(jsondict.get("DC_EVStatus.EVRESSSOC", -1))
+                    full_soc = int(jsondict.get("FullSOC", -1))
+                    energy_capacity = int(jsondict.get("EVEnergyCapacity.Value", -1))
+                    energy_request = int(jsondict.get("EVEnergyRequest.Value", -1))
 
-                    remaining_soc = int(y.get("DC_EVStatus.EVRESSSOC", -1))
-                    full_soc = int(y.get("FullSOC", -1))
-                    bulk_soc = int(y.get("BulkSOC", -1))
-                    self.publishSoCs(remaining_soc, full_soc, bulk_soc, origin="CurrentDemandReq")
+                    self.publishSoCs(current_soc, full_soc, energy_capacity, energy_request, origin="CurrentDemandReq")
 
-                    self.callbackShowStatus(str(remaining_soc), "soc")
+                    self.callbackShowStatus(str(current_soc), "soc")
 
                 except:
                     self.addToTrace("ERROR: Could not decode the CurrentDemandReq")
@@ -352,6 +372,7 @@ class fsmEvse():
         self.state = 0
         self.cyclesInState = 0
         self.rxData = []
+        self.evccid = ""
 
     def mainfunction(self):
         self.Tcp.mainfunction() # call the lower-level worker
