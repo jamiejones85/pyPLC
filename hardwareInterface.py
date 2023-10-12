@@ -1,4 +1,3 @@
-
 # For serial (including USB-to-serial) interfaces:
 # https://pyserial.readthedocs.io/en/latest/pyserial.html
 # Install pyserial library:
