@@ -192,8 +192,11 @@ class hardwareInterface():
             return self.accuMaxCurrent
         elif getConfigValue("charge_parameter_backend")=="chademo":
             return self.accuMaxCurrent #set by CAN
-        #todo: get max charging current from the BMS
-        self.accuMaxCurrent = 10
+        elif getConfigValue("charge_target_current"):
+            self.accuMaxCurrent = getConfigValue("charge_target_current")
+        else:
+            #todo: get max charging current from the BMS
+            self.accuMaxCurrent = 10
         return self.accuMaxCurrent
 
     def getAccuMaxVoltage(self):
@@ -219,7 +222,8 @@ class hardwareInterface():
             self.callbackShowStatus(format(self.soc_percent,".1f"), "soc")
         if (getConfigValue("digital_output_device")=="celeron55device"):
             return self.soc_percent
-        #todo: get SOC from the BMS
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            return self.soc_percent
         self.callbackShowStatus(format(self.simulatedSoc,".1f"), "soc")
         return self.simulatedSoc
 
@@ -445,12 +449,21 @@ class hardwareInterface():
                 self.evaluateReceivedData_celeron55device(s)
 
     def mainfunction_raspberrypi(self):
-        #read from SPI for inlet voltage
-
         #read from can bus for bus voltage
-        self.loopcounter+=1
-
-
+        message = self.canbus.recv(0)
+        if message:
+            #simpbms SoC
+            if message.arbitration_id == 0x355:
+                soc = (message.data[1] << 8) + message.data[0]
+                if self.soc_percent != soc:
+                    self.addToTrace("PI: Set capacity to %d" % soc)
+                    self.soc_percent = soc
+            #simbms Voltage
+            if message.arbitration_id == 0x356:
+                vtg = ((message.data[1]<< 8) + message.data[0]) / 100
+                if self.accuVoltage != vtg:
+                    self.addToTrace("PI: Set battery voltage to %d V" % vtg)
+                    self.accuVoltage = vtg
 
     def mainfunction_chademo(self):
        message = self.canbus.recv(0)
