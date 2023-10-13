@@ -249,7 +249,9 @@ class hardwareInterface():
             #simpbms filters
             filters = [
                {"can_id": 0x355, "can_mask": 0x7FF, "extended": False},
-               {"can_id": 0x356, "can_mask": 0x7FF, "extended": False}]
+               #{"can_id": 0x356, "can_mask": 0x7FF, "extended": False},
+               {"can_id": 0x522, "can_mask": 0x7FF, "extended": False}]
+
             self.canbus = can.interface.Bus(bustype='socketcan', channel="can0", can_filters = filters)
 
 
@@ -458,13 +460,19 @@ class hardwareInterface():
                 if self.soc_percent != soc:
                     self.addToTrace("PI: Set capacity to %d" % soc)
                     self.soc_percent = soc
-            #simbms Voltage
-            if message.arbitration_id == 0x356:
-                vtg = ((message.data[1]<< 8) + message.data[0]) / 100
+            #simbms Voltage, use shunt voltage
+            # if message.arbitration_id == 0x356:
+            #     vtg = ((message.data[1]<< 8) + message.data[0]) / 100
+            #     if self.accuVoltage != vtg:
+            #         self.addToTrace("PI: Set battery voltage to %d V" % vtg)
+            #         self.accuVoltage = vtg
+            #shunt Voltage
+            if message.arbitration_id == 0x522:
+                vtg=((message.data[5] << 24) | (message.data[4] << 16) | (message.data[3] << 8) | (message.data[2]))/ 1000
                 if self.accuVoltage != vtg:
-                    self.addToTrace("PI: Set battery voltage to %d V" % vtg)
+                    self.addToTrace("PI: Shunt set battery voltage to %d V" % vtg)
                     self.accuVoltage = vtg
-
+                    
     def mainfunction_chademo(self):
        message = self.canbus.recv(0)
 

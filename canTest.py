@@ -28,6 +28,6 @@ while(1):
             addToTrace("PI: Set battery voltage to %d V" % vtg)
         #shunt Voltage
         if message.arbitration_id == 0x522:
-            shuntVtg = ((message.data[2] << 24) + (message.data[3] << 16) + (message.data[4] << 8) + message.data[5]) / 1000 
+            shuntVtg=((message.data[5] << 24) | (message.data[4] << 16) | (message.data[3] << 8) | (message.data[2]))/ 1000
             addToTrace("PI: Shunt set battery voltage to %d V" % shuntVtg)
 
