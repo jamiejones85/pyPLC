@@ -9,7 +9,9 @@ def addToTrace(s):
 
 filters = [
     {"can_id": 0x355, "can_mask": 0x7FF, "extended": False},
-    {"can_id": 0x356, "can_mask": 0x7FF, "extended": False}]
+    {"can_id": 0x356, "can_mask": 0x7FF, "extended": False},
+    {"can_id": 0x522, "can_mask": 0x7FF, "extended": False}]
+
 canbus = can.interface.Bus(bustype='socketcan', channel="can0", can_filters = filters)
 
 while(1):
@@ -24,3 +26,8 @@ while(1):
         if message.arbitration_id == 0x356:
             vtg = ((message.data[1]<< 8) + message.data[0]) / 100
             addToTrace("PI: Set battery voltage to %d V" % vtg)
+        #shunt Voltage
+        if message.arbitration_id == 0x522:
+            shuntVtg = ((message.data[2] << 24) + (message.data[3] << 16) + (message.data[4] << 8) + message.data[5]) / 1000 
+            addToTrace("PI: Shunt set battery voltage to %d V" % shuntVtg)
+
