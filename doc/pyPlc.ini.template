@@ -52,7 +52,7 @@ soc_simulation = yes
 digital_output_device = dieter
 #digital_output_device = beaglebone
 #digital_output_device = celeron55device
-
+#digital_output_device = raspberrypi
 
 # Device to read the physically measured inlet voltage in PevMode
 # Possible options:
@@ -62,6 +62,7 @@ digital_output_device = dieter
 #analog_input_device = dieter
 analog_input_device = none
 #analog_input_device = celeron55device
+#analog_input_device = raspberrypi
 
 
 # Criteria for ending the PreCharge phase in PevMode

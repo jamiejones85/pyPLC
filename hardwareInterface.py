@@ -23,6 +23,10 @@ if (getConfigValue("charge_parameter_backend")=="chademo"):
     # In case we use the CHAdeMO backend, we want to use CAN
     import can
 
+if (getConfigValue("digital_output_device")=="raspberrypi"):
+    # In case we run on rasberrypi, we want to use GPIO ports.
+    import RPi.GPIO as GPIO
+
 class hardwareInterface():
     def needsSerial(self):
         # Find out, whether we need a serial port. This depends on several configuration items.
@@ -91,6 +95,8 @@ class hardwareInterface():
             GPIO.output(PinCp, GPIO.LOW)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("cp=0\n", "utf-8"))
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            GPIO.output(23, False)
         self.outvalue &= ~1
         
     def setStateC(self):
@@ -99,6 +105,8 @@ class hardwareInterface():
             GPIO.output(PinCp, GPIO.HIGH)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("cp=1\n", "utf-8"))
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            GPIO.output(23, True)
         self.outvalue |= 1
         
     def setPowerRelayOn(self):
@@ -107,6 +115,8 @@ class hardwareInterface():
             GPIO.output(PinPowerRelay, GPIO.HIGH)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("contactor=1\n", "utf-8"))
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            GPIO.output(24, True)
         self.outvalue |= 2
 
     def setPowerRelayOff(self):
@@ -115,6 +125,8 @@ class hardwareInterface():
             GPIO.output(PinPowerRelay, GPIO.LOW)
         if (getConfigValue("digital_output_device")=="celeron55device"):
             self.ser.write(bytes("contactor=0\n", "utf-8"))
+        if (getConfigValue("digital_output_device")=="raspberrypi"):
+            GPIO.output(24, False)
         self.outvalue &= ~2
 
     def setRelay2On(self):
@@ -227,7 +239,13 @@ class hardwareInterface():
             # Port configuration according to https://github.com/jsphuebner/pyPLC/commit/475f7fe9f3a67da3d4bd9e6e16dfb668d0ddb1d6
             GPIO.setup(PinPowerRelay, GPIO.OUT) #output for port relays
             GPIO.setup(PinCp, GPIO.OUT) #output for CP
-        
+       
+        if (getConfigValue("digital_output_device") == "raspberrypi"):
+            GPIO.setwarnings(False)
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(23, GPIO.OUT)
+            GPIO.setup(24, GPIO.OUT)
+             
     def __init__(self, callbackAddToTrace=None, callbackShowStatus=None, homeplughandler=None):
         self.callbackAddToTrace = callbackAddToTrace
         self.callbackShowStatus = callbackShowStatus
